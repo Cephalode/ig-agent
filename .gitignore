@@ -1,0 +1,5 @@
+node_modules/
+.ig-agent/
+*.log
+*.pid
+.DS_Store

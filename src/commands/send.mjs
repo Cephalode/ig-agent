@@ -1,4 +1,7 @@
-// Send command — send a DM
+/**
+ * @module commands/send
+ * Send command — send a DM.
+ */
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -6,15 +9,12 @@ import { readFile } from 'node:fs/promises';
 import { SESSION_FILE } from '../constants.mjs';
 import { log } from '../utils.mjs';
 
-/**
- * Send a DM to an Instagram user.
- * @param {string} username - Recipient's Instagram username.
- * @param {string} message - Message text to send.
- */
 export async function cmdSend(username, message) {
-  if (!username || !message) {
-    console.error('Usage: ig-agent send <username> <message>');
-    process.exit(1);
+  if (!username || typeof username !== 'string') {
+    log('✗ Invalid username'); process.exit(1);
+  }
+  if (!message || typeof message !== 'string') {
+    log('✗ Message cannot be empty'); process.exit(1);
   }
 
   const require = createRequire(import.meta.url);

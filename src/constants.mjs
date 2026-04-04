@@ -1,5 +1,7 @@
-#!/usr/bin/env node
-// ig-agent — All-in-one Instagram agent CLI
+/**
+ * @module constants
+ * Path constants and default configuration for ig-agent.
+ */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 

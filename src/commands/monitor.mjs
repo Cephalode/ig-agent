@@ -1,4 +1,7 @@
-// Monitor command — poll adb notifications and auto-reply
+/**
+ * @module commands/monitor
+ * Monitor command — poll adb notifications and auto-reply.
+ */
 import { execSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { loadConfig, loadSeen, saveSeen } from '../config.mjs';
@@ -6,10 +9,6 @@ import { log } from '../utils.mjs';
 
 const execFileAsync = promisify(execFile);
 
-/**
- * Start the notification monitor. Polls adb for Instagram notifications
- * and auto-replies to messages from allowed senders.
- */
 export async function cmdMonitor() {
   const config = await loadConfig();
   const seen = await loadSeen();
@@ -60,13 +59,6 @@ export async function cmdMonitor() {
     }
   }
 
-  /**
-   * Generate a reply via hermes and send it.
-   * @param {string} sender - Display name of sender.
-   * @param {string} text - Message text.
-   * @param {string} username - Instagram username.
-   * @param {object} config - Current config.
-   */
   async function handleWithHermes(sender, text, username, config) {
     const isDana = username === 'dana.seismo_';
     const danaHint = isDana ? '\nBe extra warm and friendly!' : '';

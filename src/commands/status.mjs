@@ -1,12 +1,12 @@
-// Status command — check system status
+/**
+ * @module commands/status
+ * Status command — check system status.
+ */
 import { readFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
-import { SESSION_FILE, PID_FILE, CONFIG_FILE, LOG_FILE } from '../constants.mjs';
+import { SESSION_FILE, PID_FILE, CONFIG_FILE, LOG_FILE, BASE } from '../constants.mjs';
 import { loadConfig } from '../config.mjs';
 
-/**
- * Display system status: session, emulator, daemon, hermes, ig-cli.
- */
 export async function cmdStatus() {
   const config = await loadConfig();
 
@@ -25,7 +25,7 @@ export async function cmdStatus() {
   // Emulator
   try {
     const adb = config.adb || 'adb';
-    const devices = execSync(`${adb} devices`, { encoding: 'utf8', timeout: 10000 });
+    const devices = execSync(`${adb} devices`, { encoding: 'utf8', stdio: ['pipe','pipe','pipe'] });
     console.log(`║ Emulator:    ${devices.includes('emulator') ? '✓ running' : '✗ not running'}`);
   } catch {
     console.log('║ Emulator:    ✗ adb not found');
@@ -33,8 +33,8 @@ export async function cmdStatus() {
 
   // Daemon
   try {
-    const pid = parseInt((await readFile(PID_FILE, 'utf8')).trim(), 10);
-    process.kill(pid, 0);
+    const pid = (await readFile(PID_FILE, 'utf8')).trim();
+    process.kill(parseInt(pid), 0);
     console.log(`║ Daemon:      ✓ running (PID ${pid})`);
   } catch {
     console.log('║ Daemon:      ✗ not running');
@@ -42,7 +42,7 @@ export async function cmdStatus() {
 
   // Hermes
   try {
-    execSync('which hermes 2>/dev/null', { timeout: 5000, stdio: 'pipe' });
+    execSync(`which hermes 2>/dev/null || echo found`, { timeout: 5000, stdio: 'pipe' });
     console.log('║ Hermes:      ✓ available');
   } catch {
     console.log('║ Hermes:      ✗ not found');
@@ -50,10 +50,8 @@ export async function cmdStatus() {
 
   // IG CLI
   try {
-    const { join } = await import('node:path');
-    const { homedir } = await import('node:os');
-    const { access } = await import('node:fs/promises');
-    await access(join(homedir(), 'devel/argonauta/ig-cli/index.mjs'));
+    const igCliPath = require('node:path').join(require('node:os').homedir(), 'devel/argonauta/ig-cli/index.mjs');
+    require('node:fs').accessSync(igCliPath);
     console.log('║ IG CLI:      ✓ found');
   } catch {
     console.log('║ IG CLI:      ✗ not found');

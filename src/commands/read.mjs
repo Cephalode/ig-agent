@@ -1,4 +1,7 @@
-// Read command — read DMs
+/**
+ * @module commands/read
+ * Read command — read DMs.
+ */
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -6,16 +9,11 @@ import { readFile } from 'node:fs/promises';
 import { SESSION_FILE } from '../constants.mjs';
 import { log } from '../utils.mjs';
 
-/**
- * Read recent DMs from an Instagram user.
- * @param {string} username - Instagram username to read messages from.
- * @param {number} [count=10] - Number of recent messages to display.
- */
 export async function cmdRead(username, count = 10) {
-  if (!username) {
-    console.error('Usage: ig-agent read <username> [count]');
-    process.exit(1);
+  if (!username || typeof username !== 'string') {
+    log('✗ Invalid username'); process.exit(1);
   }
+  if (!Number.isFinite(count) || count < 1) count = 10;
 
   const require = createRequire(import.meta.url);
   const { IgApiClient } = require(join(homedir(), 'devel/argonauta/ig-cli/node_modules/instagram-private-api'));

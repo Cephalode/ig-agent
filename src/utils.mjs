@@ -1,10 +1,13 @@
-// Utility functions
+/**
+ * @module utils
+ * Shared logging utility. Writes to stdout and appends to the log file.
+ */
 import { appendFileSync } from 'node:fs';
 import { LOG_FILE } from './constants.mjs';
 
 /**
- * Log a message to stdout and append to the log file.
- * @param {string} msg - Message to log.
+ * Log a timestamped message to console and file.
+ * @param {string} msg
  */
 export function log(msg) {
   const ts = new Date().toISOString().slice(11, 19);

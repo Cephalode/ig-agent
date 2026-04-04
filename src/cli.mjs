@@ -1,34 +1,11 @@
 #!/usr/bin/env node
 // ig-agent — All-in-one Instagram agent CLI
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { BASE } from './constants.mjs';
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
-
-/**
- * Print usage help and exit.
- */
-function printHelp() {
-  console.log(`
-🐙 ig-agent — All-in-one Instagram agent CLI
-
-Usage:
-  ig-agent install              Install dependencies
-  ig-agent login                Login and save session
-  ig-agent emulator [start|stop] Start/stop Android emulator
-  ig-agent send <user> <msg>    Send a DM
-  ig-agent read <user> [n]      Read DMs (default: 10)
-  ig-agent status               Check system status
-  ig-agent monitor              Start notification monitor (foreground)
-  ig-agent daemon               Start monitor as background daemon
-  ig-agent stop                 Stop the background daemon
-
-Config:  ${join(BASE, 'config.json')}
-Session: ${join(BASE, 'session.json')}
-Logs:    ${join(BASE, 'ig-agent.log')}
-  `);
-}
 
 async function main() {
   switch (command) {
@@ -56,7 +33,7 @@ async function main() {
     case 'read': {
       if (!args[0]) { console.log('Usage: ig-agent read <username> [count]'); process.exit(1); }
       const { cmdRead } = await import('./commands/read.mjs');
-      await cmdRead(args[0], parseInt(args[1], 10) || 10);
+      await cmdRead(args[0], parseInt(args[1]) || 10);
       break;
     }
     case 'status': {
@@ -80,7 +57,24 @@ async function main() {
       break;
     }
     default:
-      printHelp();
+      console.log(`
+🐙 ig-agent — All-in-one Instagram agent CLI
+
+Usage:
+  ig-agent install              Install dependencies
+  ig-agent login                Login and save session
+  ig-agent emulator [start|stop] Start/stop Android emulator
+  ig-agent send <user> <msg>    Send a DM
+  ig-agent read <user> [n]      Read DMs (default: 10)
+  ig-agent status               Check system status
+  ig-agent monitor              Start notification monitor (foreground)
+  ig-agent daemon               Start monitor as background daemon
+  ig-agent stop                 Stop background daemon
+
+Config: ${join(BASE, 'config.json')}
+Session: ${join(BASE, 'session.json')}
+Logs: ${join(BASE, 'ig-agent.log')}
+      `);
   }
 }
 

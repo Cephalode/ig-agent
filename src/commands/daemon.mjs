@@ -4,6 +4,9 @@ import { writeFile } from 'node:fs/promises';
 import { PID_FILE } from '../constants.mjs';
 import { log } from '../utils.mjs';
 
+/**
+ * Start the notification monitor as a background daemon process.
+ */
 export async function cmdDaemon() {
   log('Starting ig-agent daemon...');
 

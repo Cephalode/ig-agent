@@ -7,6 +7,9 @@ import { BASE, CHATS_DIR } from '../constants.mjs';
 import { loadConfig, saveConfig } from '../config.mjs';
 import { log } from '../utils.mjs';
 
+/**
+ * Install ig-agent dependencies and create required directories.
+ */
 export async function cmdInstall() {
   log('Installing ig-agent...');
   await mkdir(BASE, { recursive: true });
@@ -32,8 +35,8 @@ export async function cmdInstall() {
   await saveConfig(cfg);
 
   log('✓ ig-agent installed');
-  log(`  Config: ${join(BASE, 'config.json')}`);
+  log(`  Config:  ${join(BASE, 'config.json')}`);
   log(`  Session: ${join(BASE, 'session.json')}`);
-  log(`  Logs: ${join(BASE, 'ig-agent.log')}`);
+  log(`  Logs:    ${join(BASE, 'ig-agent.log')}`);
   log('\nNext: run `ig-agent login` to authenticate');
 }

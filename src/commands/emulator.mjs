@@ -5,6 +5,10 @@ import { PID_FILE } from '../constants.mjs';
 import { loadConfig, findEmulator } from '../config.mjs';
 import { log } from '../utils.mjs';
 
+/**
+ * Start or stop the Android emulator.
+ * @param {'start'|'stop'} [action='start'] - Action to perform.
+ */
 export async function cmdEmulator(action = 'start') {
   const config = await loadConfig();
   const emulatorPath = findEmulator();
@@ -12,7 +16,7 @@ export async function cmdEmulator(action = 'start') {
   if (action === 'stop') {
     try {
       const adb = config.adb || 'adb';
-      execSync(`${adb} emu kill`, { stdio: 'pipe' });
+      execSync(`${adb} emu kill`, { stdio: 'pipe', timeout: 10000 });
       log('✓ Emulator stopped');
     } catch (e) {
       log(`✗ Stop error: ${e.message.slice(0, 60)}`);

@@ -6,7 +6,17 @@ import { readFile } from 'node:fs/promises';
 import { SESSION_FILE } from '../constants.mjs';
 import { log } from '../utils.mjs';
 
+/**
+ * Send a DM to an Instagram user.
+ * @param {string} username - Recipient's Instagram username.
+ * @param {string} message - Message text to send.
+ */
 export async function cmdSend(username, message) {
+  if (!username || !message) {
+    console.error('Usage: ig-agent send <username> <message>');
+    process.exit(1);
+  }
+
   const require = createRequire(import.meta.url);
   const { IgApiClient } = require(join(homedir(), 'devel/argonauta/ig-cli/node_modules/instagram-private-api'));
 

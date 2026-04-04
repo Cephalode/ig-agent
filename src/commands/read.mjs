@@ -6,7 +6,17 @@ import { readFile } from 'node:fs/promises';
 import { SESSION_FILE } from '../constants.mjs';
 import { log } from '../utils.mjs';
 
+/**
+ * Read recent DMs from an Instagram user.
+ * @param {string} username - Instagram username to read messages from.
+ * @param {number} [count=10] - Number of recent messages to display.
+ */
 export async function cmdRead(username, count = 10) {
+  if (!username) {
+    console.error('Usage: ig-agent read <username> [count]');
+    process.exit(1);
+  }
+
   const require = createRequire(import.meta.url);
   const { IgApiClient } = require(join(homedir(), 'devel/argonauta/ig-cli/node_modules/instagram-private-api'));
 

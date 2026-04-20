@@ -6,12 +6,13 @@ import instaPkg from 'nodejs-insta-private-api';
 const { RealtimeClient, useMultiFileAuthState } = instaPkg;
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeFile, unlink } from 'node:fs/promises';
+import { writeFile, unlink, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAuthenticatedClient } from '../lib/ig-client.mjs';
 import { loadConfig } from '../config.mjs';
 import { log } from '../utils.mjs';
+import { MEMORY_DIR } from '../constants.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -157,6 +158,10 @@ async function handleWithPi({ username, mappedUsername, text, threadId, imageUrl
   const model = config.piModel || 'z-ai/glm-4.7-flash';
   const systemPrompt = `You are @bumblebeeclanker on Instagram — a chill, witty AI. Reply briefly and casually (1-2 sentences max).${danaHint}`;
 
+  // Per-thread session file for persistent memory
+  await mkdir(MEMORY_DIR, { recursive: true });
+  const sessionFile = join(MEMORY_DIR, `${threadId}.json`);
+
   let prompt = text;
   let cleanup = null;
 
@@ -179,7 +184,7 @@ async function handleWithPi({ username, mappedUsername, text, threadId, imageUrl
   log('  → Generating reply...');
   try {
     const { stdout } = await execFileAsync('/bin/bash', ['-c',
-      `${piBin} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --no-session --thinking off --mode text 2>/dev/null`
+      `${piBin} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --session ${JSON.stringify(sessionFile)} --thinking off --mode text 2>/dev/null`
     ], {
       timeout: 30000, maxBuffer: 1024 * 1024, encoding: 'utf8',
       cwd: '/tmp'

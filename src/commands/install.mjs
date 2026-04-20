@@ -1,42 +1,53 @@
 /**
  * @module commands/install
- * Install command — set up dependencies.
+ * Install command — set up directories and dependencies.
  */
 import { mkdir } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { BASE, CHATS_DIR } from '../constants.mjs';
+import { BASE, AUTH_DIR, CHATS_DIR } from '../constants.mjs';
 import { loadConfig, saveConfig } from '../config.mjs';
 import { log } from '../utils.mjs';
 
 export async function cmdInstall() {
   log('Installing ig-agent...');
+
+  // Create directories
   await mkdir(BASE, { recursive: true });
+  await mkdir(AUTH_DIR, { recursive: true });
   await mkdir(CHATS_DIR, { recursive: true });
+  log(`✓ Created directories in ${BASE}`);
 
-  // Check node
-  try { execSync('node --version', { stdio: 'pipe' }); }
-  catch { log('✗ Node.js not found. Install node >= 20 first.'); process.exit(1); }
-
-  // Check instagram-private-api
-  const igCliPath = join(homedir(), 'devel/argonauta/ig-cli');
+  // Check node version
   try {
-    const { access } = await import('node:fs/promises');
-    await access(join(igCliPath, 'node_modules/instagram-private-api/package.json'));
-    log('✓ instagram-private-api found');
+    const version = execSync('node --version', { encoding: 'utf8' }).trim();
+    const major = parseInt(version.replace(/^v/, ''), 10);
+    if (major < 20) {
+      log(`✗ Node.js ${version} found — need >= 20. Please upgrade.`);
+      process.exit(1);
+    }
+    log(`✓ Node.js ${version}`);
   } catch {
-    log('Installing instagram-cli dependencies...');
-    execSync(`cd ${igCliPath} && npm install`, { stdio: 'inherit' });
+    log('✗ Node.js not found. Install node >= 20 first.');
+    process.exit(1);
   }
 
-  // Save config
+  // Install npm dependencies (nodejs-insta-private-api etc.)
+  log('Installing npm dependencies...');
+  const projectDir = new URL('..', import.meta.url).pathname;
+  execSync('npm install', { cwd: projectDir, stdio: 'inherit' });
+  log('✓ npm dependencies installed');
+
+  // Save default config
   const cfg = await loadConfig();
   await saveConfig(cfg);
+  log('✓ Default config saved');
 
-  log('✓ ig-agent installed');
-  log(`  Config: ${join(BASE, 'config.json')}`);
-  log(`  Session: ${join(BASE, 'session.json')}`);
-  log(`  Logs: ${join(BASE, 'ig-agent.log')}`);
-  log('\nNext: run `ig-agent login` to authenticate');
+  log('');
+  log('✓ ig-agent installed successfully!');
+  log(`  Config:  ${join(BASE, 'config.json')}`);
+  log(`  Auth:    ${AUTH_DIR}`);
+  log(`  Logs:    ${join(BASE, 'ig-agent.log')}`);
+  log('');
+  log('Next: run `ig-agent login` to authenticate');
 }

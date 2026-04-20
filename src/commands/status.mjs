@@ -3,8 +3,9 @@
  * Status command — check system status.
  */
 import { readFile } from 'node:fs/promises';
+import { existsSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { SESSION_FILE, PID_FILE, CONFIG_FILE, LOG_FILE, BASE } from '../constants.mjs';
+import { AUTH_DIR, PID_FILE, CONFIG_FILE, LOG_FILE } from '../constants.mjs';
 import { loadConfig } from '../config.mjs';
 
 export async function cmdStatus() {
@@ -14,21 +15,14 @@ export async function cmdStatus() {
   console.log('║   🐙 ig-agent status                 ║');
   console.log('╠══════════════════════════════════════╣');
 
-  // Session
-  try {
-    await readFile(SESSION_FILE);
-    console.log('║ Session:     ✓ valid');
-  } catch {
-    console.log('║ Session:     ✗ not found (run ig-agent login)');
-  }
-
-  // Emulator
-  try {
-    const adb = config.adb || 'adb';
-    const devices = execSync(`${adb} devices`, { encoding: 'utf8', stdio: ['pipe','pipe','pipe'] });
-    console.log(`║ Emulator:    ${devices.includes('emulator') ? '✓ running' : '✗ not running'}`);
-  } catch {
-    console.log('║ Emulator:    ✗ adb not found');
+  // Auth state
+  const hasCreds = existsSync(`${AUTH_DIR}/creds.json`);
+  const hasCookies = existsSync(`${AUTH_DIR}/cookies.json`);
+  if (hasCreds && hasCookies) {
+    console.log('║ Auth:        ✓ valid (creds + cookies)');
+  } else {
+    const files = existsSync(AUTH_DIR) ? readdirSync(AUTH_DIR) : [];
+    console.log(`║ Auth:        ✗ not found (run ig-agent login) [${files.join(', ') || 'empty'}]`);
   }
 
   // Daemon
@@ -42,19 +36,10 @@ export async function cmdStatus() {
 
   // Hermes
   try {
-    execSync(`which hermes 2>/dev/null || echo found`, { timeout: 5000, stdio: 'pipe' });
+    execSync('which hermes 2>/dev/null || echo found', { timeout: 5000, stdio: 'pipe' });
     console.log('║ Hermes:      ✓ available');
   } catch {
     console.log('║ Hermes:      ✗ not found');
-  }
-
-  // IG CLI
-  try {
-    const igCliPath = require('node:path').join(require('node:os').homedir(), 'devel/argonauta/ig-cli/index.mjs');
-    require('node:fs').accessSync(igCliPath);
-    console.log('║ IG CLI:      ✓ found');
-  } catch {
-    console.log('║ IG CLI:      ✗ not found');
   }
 
   const allowed = config.allowedSenders?.length || 0;

@@ -1,94 +1,157 @@
 /**
  * @module commands/monitor
- * Monitor command — poll adb notifications and auto-reply.
+ * Monitor command — MQTT-based realtime DM listener and auto-reply.
  */
-import { execSync, execFile } from 'node:child_process';
+import instaPkg from 'nodejs-insta-private-api';
+const { RealtimeClient, useMultiFileAuthState } = instaPkg;
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { loadConfig, loadSeen, saveSeen } from '../config.mjs';
+import { writeFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { getAuthenticatedClient } from '../lib/ig-client.mjs';
+import { loadConfig } from '../config.mjs';
 import { log } from '../utils.mjs';
 
 const execFileAsync = promisify(execFile);
 
 export async function cmdMonitor() {
   const config = await loadConfig();
-  const seen = await loadSeen();
-  let processing = false;
+  log('=== ig-agent monitor starting (MQTT) ===');
 
-  log('=== ig-agent monitor started ===');
+  // Authenticate
+  const { ig, authState } = await getAuthenticatedClient();
+  log('✓ Authenticated');
 
-  async function check() {
-    if (processing) return;
-    processing = true;
-    try {
-      const adb = config.adb || 'adb';
-      const output = execSync(`${adb} shell dumpsys notification --noredact`, {
-        timeout: 15000, encoding: 'utf8'
-      });
+  // Create realtime client
+  const realtime = new RealtimeClient(ig);
 
-      const re = /sender=([^,]+),\s*text=([^,]+),\s*time=(\d+)/g;
-      let match;
-      while ((match = re.exec(output)) !== null) {
-        const sender = match[1].trim();
-        const text = match[2].trim();
-        const time = match[3];
-        const key = `${sender}:${text}:${time}`;
+  // Handle incoming messages
+  realtime.on('message_live', async (msg) => {
+    const myId = ig.state.cookieUserId;
+    if (msg.userId?.toString() === myId) return;
 
-        if (seen.has(key) || text.length === 0) continue;
+    const username = msg.username || `user_${msg.userId}`;
 
-        const ctx = output.slice(Math.max(0, match.index - 2000), match.index);
-        if (!ctx.includes('com.instagram.android')) continue;
-        seen.add(key);
+    // Check if sender is in allowed list
+    const mappedUsername = Object.entries(config.nameMap || {}).find(([display]) =>
+      username.toLowerCase().includes(display.toLowerCase())
+    )?.[1] || username;
 
-        const username = Object.entries(config.nameMap || {}).find(([display]) =>
-          sender.includes(display)
-        )?.[1];
+    if (!(config.allowedSenders || []).includes(mappedUsername)) {
+      log(`→ Skipping: @${username}`);
+      return;
+    }
 
-        if (!username || !(config.allowedSenders || []).includes(username)) {
-          log(`→ Skipping: ${sender}`);
-          continue;
-        }
+    const itemType = msg.itemType || 'text';
 
-        log(`📩 ${sender} (@${username}): "${text.slice(0, 50)}"`);
-        await handleWithHermes(sender, text, username, config);
+    // Extract image URL for media messages
+    let imageUrl = null;
+    if (['media', 'raven_media'].includes(itemType)) {
+      const raw = msg.rawData || {};
+      const media = raw.media || raw.visual_media?.media;
+      if (media?.image_versions2?.candidates?.[0]?.url) {
+        imageUrl = media.image_versions2.candidates[0].url;
       }
-      await saveSeen(seen);
+    }
+
+    // Text messages
+    if (itemType === 'text' && msg.text) {
+      log(`📩 @${username}: "${msg.text.slice(0, 50)}"`);
+      await handleWithPi(username, msg.text, msg.thread_id, mappedUsername, config, realtime);
+      return;
+    }
+
+    // Image messages
+    if (imageUrl) {
+      log(`📸 @${username}: sent an image`);
+      await handleWithPi(username, '[user sent an image]', msg.thread_id, mappedUsername, config, realtime, imageUrl);
+      return;
+    }
+
+    // Other types (links, reels, etc.) — log and skip
+    log(`📨 @${username}: sent ${itemType} (skipped)`);
+  });
+
+  realtime.on('error', (err) => {
+    log(`✗ MQTT error: ${err.message?.slice(0, 80) || err}`);
+  });
+
+  realtime.on('warning', (warn) => {
+    log(`⚠ MQTT warning: ${warn.message?.slice(0, 80) || warn}`);
+  });
+
+  // Connect
+  try {
+    await realtime.startRealTimeListener();
+    log('✓ MQTT connected — listening for DMs');
+
+    // Save MQTT session for faster reconnects
+    try { await authState.saveMqttSession(realtime); } catch {}
+  } catch (e) {
+    log(`✗ MQTT connection failed: ${e.message}`);
+    process.exit(1);
+  }
+
+  // Graceful shutdown
+  const shutdown = async () => {
+    log('Shutting down...');
+    try { await realtime.disconnect(); } catch {}
+    try { await authState.saveMqttSession(realtime); } catch {}
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+async function handleWithPi(sender, text, threadId, username, config, realtime, imageUrl = null) {
+  const isDana = username === 'dana.seismo_';
+  const danaHint = isDana ? '\nBe extra warm and friendly!' : '';
+  const piBin = config.piPath || '/Users/sqibo/.local/bin/pi';
+  const model = config.piModel || 'z-ai/glm-4.7-flash';
+  const systemPrompt = `You are @bumblebeeclanker on Instagram — a chill, witty AI. Reply briefly and casually (1-2 sentences max).${danaHint}`;
+
+  let prompt = text;
+  let cleanup = null;
+
+  // For images: download to temp file and reference in prompt
+  if (imageUrl) {
+    try {
+      const resp = await fetch(imageUrl);
+      const buf = Buffer.from(await resp.arrayBuffer());
+      const tmpPath = join(tmpdir(), `ig-img-${Date.now()}.jpg`);
+      await writeFile(tmpPath, buf);
+      prompt = `[user sent an image — describe what you see and react to it casually]`;
+      // pi supports image URLs inline; pass the local file path
+      prompt += `\n\nImage: file://${tmpPath}`;
+      cleanup = tmpPath;
     } catch (e) {
-      log(`✗ Check error: ${e.message.slice(0, 60)}`);
-    } finally {
-      processing = false;
+      log(`  ⚠ Image download failed: ${e.message.slice(0, 60)}`);
+      prompt = '[user sent an image but it failed to load — react casually]';
     }
   }
 
-  async function handleWithHermes(sender, text, username, config) {
-    const isDana = username === 'dana.seismo_';
-    const danaHint = isDana ? '\nBe extra warm and friendly!' : '';
-    const hermes = config.hermesPath || 'hermes';
-    const prompt = `You are @bumblebeeclanker on Instagram. Reply briefly and casually (1-2 sentences).${danaHint}\n\nDM from ${sender}: "${text}"\n\nJust output the reply text, nothing else.`;
+  log('  → Generating reply...');
+  try {
+    const { stdout } = await execFileAsync('/bin/bash', ['-c',
+      `${piBin} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --no-session --thinking off --mode text 2>/dev/null`
+    ], {
+      timeout: 30000, maxBuffer: 1024 * 1024, encoding: 'utf8'
+    });
 
-    log('  → Generating reply...');
+    const reply = stdout.trim();
+    if (!reply) { log('  ✗ Empty reply'); return; }
+    log(`  ← Reply: "${reply.slice(0, 60)}"`);
+
     try {
-      const { stdout } = await execFileAsync('/bin/bash', ['-c', `${hermes} chat -q ${JSON.stringify(prompt)}`], {
-        timeout: 60000, maxBuffer: 1024 * 1024, encoding: 'utf8'
-      });
-
-      const reply = stdout.trim();
-      if (!reply) { log('  ✗ Empty reply'); return; }
-      log(`  ← Reply: "${reply.slice(0, 60)}"`);
-
-      try {
-        const igCli = config.sendPath || `node ${require('node:path').join(require('node:os').homedir(), 'devel/argonauta/ig-cli/index.mjs')}`;
-        execSync(`${igCli} send ${username} "${reply.replace(/"/g, '\\"')}"`, {
-          timeout: 30000, encoding: 'utf8'
-        });
-        log(`  ✓ Sent to @${username}`);
-      } catch (e) {
-        log(`  ✗ Send error: ${e.message.slice(0, 80)}`);
-      }
+      await realtime.dmSender.sendTextMessage(threadId, reply);
+      log(`  ✓ Sent to @${username}`);
     } catch (e) {
-      log(`  ✗ Hermes error: ${e.message.slice(0, 80)}`);
+      log(`  ✗ Send error: ${e.message.slice(0, 80)}`);
     }
+  } catch (e) {
+    log(`  ✗ PI error: ${e.message.slice(0, 80)}`);
+  } finally {
+    if (cleanup) { try { await unlink(cleanup); } catch {} }
   }
-
-  await check();
-  setInterval(check, config.pollInterval || 5000);
 }

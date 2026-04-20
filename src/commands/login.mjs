@@ -1,56 +1,47 @@
 /**
  * @module commands/login
- * Login command — authenticate and save session.
+ * Login command — authenticate and save session using multi-file auth state.
  */
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import instaPkg from 'nodejs-insta-private-api';
+const { IgApiClient, useMultiFileAuthState } = instaPkg;
+import { mkdir } from 'node:fs/promises';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { SESSION_FILE, BASE } from '../constants.mjs';
+import { AUTH_DIR, BASE } from '../constants.mjs';
 import { log } from '../utils.mjs';
 
 export async function cmdLogin() {
   await mkdir(BASE, { recursive: true });
+  await mkdir(AUTH_DIR, { recursive: true });
   const rl = readline.createInterface({ input, output });
 
   const username = await rl.question('Username: ');
-  const password = await rl.question('Password: ', { hideEchoBack: true });
-
-  const require = createRequire(import.meta.url);
-  const { IgApiClient } = require(require('node:path').join(require('node:os').homedir(), 'devel/argonauta/ig-cli/node_modules/instagram-private-api'));
+  const password = await rl.question('Password: ');
 
   const ig = new IgApiClient();
-  ig.state.generateDevice(username);
+  const authState = await useMultiFileAuthState(AUTH_DIR);
+
+  // Load existing device/cookies if available
+  if (authState.hasSession()) {
+    await authState.loadCreds(ig);
+  }
 
   try {
-    await ig.simulate.preLoginFlow();
-    const loggedInUser = await ig.account.login(username, password);
+    const loggedInUser = await ig.login({ username, password });
     log(`✓ Logged in as @${loggedInUser.username}`);
+    await authState.saveCreds(ig);
+    log(`✓ Session saved to ${AUTH_DIR}`);
   } catch (e) {
-    if (e.name === 'IgCheckpointError') {
-      log('⚠ Verification required — check your email/phone');
-      const code = await rl.question('Enter code: ');
-      await ig.challenge.sendSecurityCode(code);
-      log('✓ Verified!');
-    } else if (e.name === 'IgLoginTwoFactorRequiredError') {
-      const info = e.response.body.two_factor_info;
-      log(`⚠ 2FA required (${info.totp_two_factor_on ? 'authenticator app' : 'SMS'})`);
-      const code = await rl.question('Enter 2FA code: ');
-      await ig.account.twoFactorLogin({
-        username, verificationCode: code,
-        twoFactorIdentifier: info.two_factor_identifier,
-        verificationMethod: info.totp_two_factor_on ? '0' : '1',
-        trustThisDevice: '1',
-      });
-      log('✓ 2FA verified!');
+    if (e.name === 'IgLoginTwoFactorRequiredError' ||
+        e.message.includes('two_factor') ||
+        e.message.includes('Two factor')) {
+      log('⚠ 2FA required — this login flow does not support inline 2FA yet.');
+      log('  Please disable 2FA temporarily or use an app password.');
+      log(`  Error: ${e.message}`);
     } else {
-      rl.close();
-      throw e;
+      log(`✗ Login failed: ${e.message}`);
     }
   }
 
-  const sessionData = await ig.state.serialize();
-  await writeFile(SESSION_FILE, JSON.stringify(sessionData));
-  log(`✓ Session saved to ${SESSION_FILE}`);
   rl.close();
 }

@@ -1,12 +1,8 @@
 /**
  * @module commands/send
- * Send command — send a DM.
+ * Send command — send a DM to a user.
  */
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { readFile } from 'node:fs/promises';
-import { SESSION_FILE } from '../constants.mjs';
+import { getAuthenticatedClient } from '../lib/ig-client.mjs';
 import { log } from '../utils.mjs';
 
 export async function cmdSend(username, message) {
@@ -17,18 +13,14 @@ export async function cmdSend(username, message) {
     log('✗ Message cannot be empty'); process.exit(1);
   }
 
-  const require = createRequire(import.meta.url);
-  const { IgApiClient } = require(join(homedir(), 'devel/argonauta/ig-cli/node_modules/instagram-private-api'));
+  const { ig } = await getAuthenticatedClient();
 
-  const sessionData = JSON.parse(await readFile(SESSION_FILE, 'utf8'));
-  const ig = new IgApiClient();
-  ig.state.generateDevice('bumblebeeclanker');
-  await ig.state.deserialize(sessionData);
-
-  const user = await ig.user.searchExact(username);
-  if (!user) { log(`✗ User not found: ${username}`); process.exit(1); }
-
-  const thread = ig.entity.directThread([user.pk.toString()]);
-  await thread.broadcastText(message);
-  log(`✓ Sent to @${username}: ${message}`);
+  // Use the high-level dm.send which resolves username → thread → broadcast
+  try {
+    await ig.dm.send({ to: username, message });
+    log(`✓ Sent to @${username}: ${message}`);
+  } catch (e) {
+    log(`✗ Failed to send: ${e.message}`);
+    process.exit(1);
+  }
 }

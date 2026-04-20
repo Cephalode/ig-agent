@@ -1,23 +1,67 @@
 /**
  * @module commands/monitor
- * Monitor command — MQTT-based realtime DM listener and auto-reply.
+ * Monitor command — MQTT-based realtime DM listener with message queue.
  */
 import instaPkg from 'nodejs-insta-private-api';
 const { RealtimeClient, useMultiFileAuthState } = instaPkg;
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeFile, unlink } from 'node:fs/promises';
+import { writeFile, unlink, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAuthenticatedClient } from '../lib/ig-client.mjs';
 import { loadConfig } from '../config.mjs';
 import { log } from '../utils.mjs';
+import { MEMORY_DIR } from '../constants.mjs';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Simple async message queue — processes one message at a time.
+ * Incoming messages are pushed to the queue; a single consumer loop
+ * picks them up sequentially so no message gets dropped.
+ */
+class MessageQueue {
+  constructor() {
+    this._queue = [];
+    this._processing = false;
+    this._stats = { queued: 0, processed: 0, dropped: 0 };
+  }
+
+  async enqueue(handler, payload) {
+    this._stats.queued++;
+    this._queue.push({ handler, payload });
+    log(`  📋 Queued (depth: ${this._queue.length}, total: ${this._stats.queued})`);
+    this._drain();
+  }
+
+  async _drain() {
+    if (this._processing) return;
+    this._processing = true;
+
+    while (this._queue.length > 0) {
+      const { handler, payload } = this._queue.shift();
+      try {
+        await handler(payload);
+        this._stats.processed++;
+      } catch (err) {
+        this._stats.dropped++;
+        log(`  ✗ Queue handler error: ${err.message?.slice(0, 80) || err}`);
+      }
+    }
+
+    this._processing = false;
+  }
+
+  get stats() {
+    return { ...this._stats, depth: this._queue.length };
+  }
+}
+
 export async function cmdMonitor() {
   const config = await loadConfig();
-  log('=== ig-agent monitor starting (MQTT) ===');
+  const queue = new MessageQueue();
+  log('=== ig-agent monitor starting (MQTT + queue) ===');
 
   // Authenticate
   const { ig, authState } = await getAuthenticatedClient();
@@ -26,51 +70,53 @@ export async function cmdMonitor() {
   // Create realtime client
   const realtime = new RealtimeClient(ig);
 
-  // Handle incoming messages
-  realtime.on('message_live', async (msg) => {
+  // The MessageSync mixin emits 'message' (not 'message_live')
+  // Payload shape: { message: { thread_id, ...raw }, parsed: { username, userId, text, itemType, threadId, rawData } }
+  realtime.on('message', (msg) => {
+    const p = msg.parsed || {};
+    const threadId = p.threadId || msg.message?.thread_id;
+    const username = p.username || 'unknown';
+    const userId = p.userId;
+    const text = p.text || '';
+    const itemType = p.itemType || 'text';
+    const rawData = p.rawData || {};
+
+    // Skip own messages
     const myId = ig.state.cookieUserId;
-    if (msg.userId?.toString() === myId) return;
+    if (String(userId) === String(myId)) return;
 
-    const username = msg.username || `user_${msg.userId}`;
-
-    // Check if sender is in allowed list
+    // Resolve display name → username mapping
     const mappedUsername = Object.entries(config.nameMap || {}).find(([display]) =>
       username.toLowerCase().includes(display.toLowerCase())
     )?.[1] || username;
 
+    // Check allowed senders
     if (!(config.allowedSenders || []).includes(mappedUsername)) {
       log(`→ Skipping: @${username}`);
       return;
     }
 
-    const itemType = msg.itemType || 'text';
-
     // Extract image URL for media messages
     let imageUrl = null;
     if (['media', 'raven_media'].includes(itemType)) {
-      const raw = msg.rawData || {};
-      const media = raw.media || raw.visual_media?.media;
+      const media = rawData.media || rawData.visual_media?.media;
       if (media?.image_versions2?.candidates?.[0]?.url) {
         imageUrl = media.image_versions2.candidates[0].url;
       }
     }
 
-    // Text messages
-    if (itemType === 'text' && msg.text) {
-      log(`📩 @${username}: "${msg.text.slice(0, 50)}"`);
-      await handleWithPi(username, msg.text, msg.thread_id, mappedUsername, config, realtime);
-      return;
-    }
+    const payload = { username, mappedUsername, userId, text, itemType, threadId, imageUrl, rawData, config, realtime };
 
-    // Image messages
-    if (imageUrl) {
+    if (itemType === 'text' && text) {
+      log(`📩 @${username}: "${text.slice(0, 50)}"`);
+      queue.enqueue(handleWithPi, payload);
+    } else if (imageUrl) {
       log(`📸 @${username}: sent an image`);
-      await handleWithPi(username, '[user sent an image]', msg.thread_id, mappedUsername, config, realtime, imageUrl);
-      return;
+      payload.text = '[user sent an image]';
+      queue.enqueue(handleWithPi, payload);
+    } else {
+      log(`📨 @${username}: sent ${itemType} (skipped)`);
     }
-
-    // Other types (links, reels, etc.) — log and skip
-    log(`📨 @${username}: sent ${itemType} (skipped)`);
   });
 
   realtime.on('error', (err) => {
@@ -86,7 +132,6 @@ export async function cmdMonitor() {
     await realtime.startRealTimeListener();
     log('✓ MQTT connected — listening for DMs');
 
-    // Save MQTT session for faster reconnects
     try { await authState.saveMqttSession(realtime); } catch {}
   } catch (e) {
     log(`✗ MQTT connection failed: ${e.message}`);
@@ -96,6 +141,8 @@ export async function cmdMonitor() {
   // Graceful shutdown
   const shutdown = async () => {
     log('Shutting down...');
+    const stats = queue.stats;
+    log(`  Queue stats: ${stats.processed} processed, ${stats.dropped} dropped, ${stats.depth} pending`);
     try { await realtime.disconnect(); } catch {}
     try { await authState.saveMqttSession(realtime); } catch {}
     process.exit(0);
@@ -104,17 +151,21 @@ export async function cmdMonitor() {
   process.on('SIGTERM', shutdown);
 }
 
-async function handleWithPi(sender, text, threadId, username, config, realtime, imageUrl = null) {
-  const isDana = username === 'dana.seismo_';
+async function handleWithPi({ username, mappedUsername, text, threadId, imageUrl, config, realtime }) {
+  const isDana = mappedUsername === 'dana.seismo_';
   const danaHint = isDana ? '\nBe extra warm and friendly!' : '';
   const piBin = config.piPath || '/Users/sqibo/.local/bin/pi';
   const model = config.piModel || 'z-ai/glm-4.7-flash';
   const systemPrompt = `You are @bumblebeeclanker on Instagram — a chill, witty AI. Reply briefly and casually (1-2 sentences max).${danaHint}`;
 
+  // Per-thread session file for persistent memory
+  await mkdir(MEMORY_DIR, { recursive: true });
+  const sessionFile = join(MEMORY_DIR, `${threadId}.json`);
+
   let prompt = text;
   let cleanup = null;
 
-  // For images: download to temp file and reference in prompt
+  // For images: download to temp file
   if (imageUrl) {
     try {
       const resp = await fetch(imageUrl);
@@ -122,7 +173,6 @@ async function handleWithPi(sender, text, threadId, username, config, realtime, 
       const tmpPath = join(tmpdir(), `ig-img-${Date.now()}.jpg`);
       await writeFile(tmpPath, buf);
       prompt = `[user sent an image — describe what you see and react to it casually]`;
-      // pi supports image URLs inline; pass the local file path
       prompt += `\n\nImage: file://${tmpPath}`;
       cleanup = tmpPath;
     } catch (e) {
@@ -134,9 +184,10 @@ async function handleWithPi(sender, text, threadId, username, config, realtime, 
   log('  → Generating reply...');
   try {
     const { stdout } = await execFileAsync('/bin/bash', ['-c',
-      `${piBin} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --no-session --thinking off --mode text 2>/dev/null`
+      `${piBin} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --session ${JSON.stringify(sessionFile)} --thinking off --mode text 2>/dev/null`
     ], {
-      timeout: 30000, maxBuffer: 1024 * 1024, encoding: 'utf8'
+      timeout: 60000, maxBuffer: 1024 * 1024, encoding: 'utf8',
+      cwd: '/tmp'
     });
 
     const reply = stdout.trim();
@@ -144,8 +195,8 @@ async function handleWithPi(sender, text, threadId, username, config, realtime, 
     log(`  ← Reply: "${reply.slice(0, 60)}"`);
 
     try {
-      await realtime.dmSender.sendTextMessage(threadId, reply);
-      log(`  ✓ Sent to @${username}`);
+      await realtime.directCommands.sendTextViaRealtime(threadId, reply);
+      log(`  ✓ Sent to @${mappedUsername}`);
     } catch (e) {
       log(`  ✗ Send error: ${e.message.slice(0, 80)}`);
     }

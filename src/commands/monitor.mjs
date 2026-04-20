@@ -44,7 +44,7 @@ export async function cmdMonitor() {
       return;
     }
 
-    await handleWithHermes(username, msg.text, msg.thread_id, mappedUsername, config, realtime);
+    await handleWithPi(username, msg.text, msg.thread_id, mappedUsername, config, realtime);
   });
 
   realtime.on('error', (err) => {
@@ -78,16 +78,19 @@ export async function cmdMonitor() {
   process.on('SIGTERM', shutdown);
 }
 
-async function handleWithHermes(sender, text, threadId, username, config, realtime) {
+async function handleWithPi(sender, text, threadId, username, config, realtime) {
   const isDana = username === 'dana.seismo_';
   const danaHint = isDana ? '\nBe extra warm and friendly!' : '';
-  const hermes = config.hermesPath || 'hermes';
-  const prompt = `You are @bumblebeeclanker on Instagram. Reply briefly and casually (1-2 sentences).${danaHint}\n\nDM from ${sender}: "${text}"\n\nJust output the reply text, nothing else.`;
+  const piBin = config.piPath || '/Users/sqibo/.local/bin/pi';
+  const model = config.piModel || 'z-ai/glm-4.7-flash';
+  const systemPrompt = `You are @bumblebeeclanker on Instagram — a chill, witty AI. Reply briefly and casually (1-2 sentences max).${danaHint}`;
 
   log('  → Generating reply...');
   try {
-    const { stdout } = await execFileAsync('/bin/bash', ['-c', `${hermes} chat -q ${JSON.stringify(prompt)}`], {
-      timeout: 60000, maxBuffer: 1024 * 1024, encoding: 'utf8'
+    const { stdout } = await execFileAsync('/bin/bash', ['-c',
+      `${piBin} -p ${JSON.stringify(text)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --no-session --thinking off --mode text 2>/dev/null`
+    ], {
+      timeout: 30000, maxBuffer: 1024 * 1024, encoding: 'utf8'
     });
 
     const reply = stdout.trim();
@@ -101,6 +104,6 @@ async function handleWithHermes(sender, text, threadId, username, config, realti
       log(`  ✗ Send error: ${e.message.slice(0, 80)}`);
     }
   } catch (e) {
-    log(`  ✗ Hermes error: ${e.message.slice(0, 80)}`);
+    log(`  ✗ PI error: ${e.message.slice(0, 80)}`);
   }
 }

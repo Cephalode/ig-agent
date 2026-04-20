@@ -108,7 +108,7 @@ async function handleWithPi(sender, text, threadId, username, config, realtime, 
   const isDana = username === 'dana.seismo_';
   const danaHint = isDana ? '\nBe extra warm and friendly!' : '';
   const piBin = config.piPath || '/Users/sqibo/.local/bin/pi';
-  const model = config.piModel || 'z-ai/glm-4.6v';
+  const model = config.piModel || 'z-ai/glm-4.7-flash';
   const systemPrompt = `You are @bumblebeeclanker on Instagram — a chill, witty AI. Reply briefly and casually (1-2 sentences max).${danaHint}`;
 
   let prompt = text;

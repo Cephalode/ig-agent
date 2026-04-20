@@ -1,7 +1,7 @@
 {
   "name": "ig-agent",
-  "version": "1.0.0",
-  "description": "All-in-one Instagram agent CLI — login, monitor notifications, auto-reply via AI",
+  "version": "2.0.0",
+  "description": "Instagram DM agent — real-time MQTT auto-reply via AI",
   "type": "module",
   "bin": {
     "ig-agent": "./src/cli.mjs"
@@ -10,6 +10,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "instagram-private-api": "^1.46.1"
+    "nodejs-insta-private-api": "^5.61.12"
   }
 }

@@ -1,6 +1,8 @@
 /**
  * @module commands/monitor
  * Monitor command — MQTT-based realtime DM listener with message queue.
+ * Uses pi with a minimal config (no extensions) for fast ~4s replies.
+ * Per-thread session files in ~/.ig-agent/memory/ give persistent memory.
  */
 import instaPkg from 'nodejs-insta-private-api';
 const { RealtimeClient, useMultiFileAuthState } = instaPkg;
@@ -12,14 +14,14 @@ import { join } from 'node:path';
 import { getAuthenticatedClient } from '../lib/ig-client.mjs';
 import { loadConfig } from '../config.mjs';
 import { log } from '../utils.mjs';
-import { MEMORY_DIR } from '../constants.mjs';
+import { MEMORY_DIR, BASE } from '../constants.mjs';
 
 const execFileAsync = promisify(execFile);
+const PI_BIN = '/Users/sqibo/.local/bin/pi';
+const PI_CONFIG = join(BASE, 'pi-config', 'agent');
 
 /**
  * Simple async message queue — processes one message at a time.
- * Incoming messages are pushed to the queue; a single consumer loop
- * picks them up sequentially so no message gets dropped.
  */
 class MessageQueue {
   constructor() {
@@ -61,7 +63,10 @@ class MessageQueue {
 export async function cmdMonitor() {
   const config = await loadConfig();
   const queue = new MessageQueue();
-  log('=== ig-agent monitor starting (MQTT + queue) ===');
+  log('=== ig-agent monitor starting (MQTT + pi) ===');
+
+  // Ensure memory directory exists
+  await mkdir(MEMORY_DIR, { recursive: true });
 
   // Authenticate
   const { ig, authState } = await getAuthenticatedClient();
@@ -70,8 +75,7 @@ export async function cmdMonitor() {
   // Create realtime client
   const realtime = new RealtimeClient(ig);
 
-  // The MessageSync mixin emits 'message' (not 'message_live')
-  // Payload shape: { message: { thread_id, ...raw }, parsed: { username, userId, text, itemType, threadId, rawData } }
+  // Handle incoming messages
   realtime.on('message', (msg) => {
     const p = msg.parsed || {};
     const threadId = p.threadId || msg.message?.thread_id;
@@ -151,15 +155,13 @@ export async function cmdMonitor() {
   process.on('SIGTERM', shutdown);
 }
 
-async function handleWithPi({ username, mappedUsername, text, threadId, imageUrl, config, realtime }) {
+async function handleWithPi({ mappedUsername, text, threadId, imageUrl, config, realtime }) {
   const isDana = mappedUsername === 'dana.seismo_';
   const danaHint = isDana ? '\nBe extra warm and friendly!' : '';
-  const piBin = config.piPath || '/Users/sqibo/.local/bin/pi';
   const model = config.piModel || 'z-ai/glm-4.7-flash';
   const systemPrompt = `You are @bumblebeeclanker on Instagram — a chill, witty AI. Reply briefly and casually (1-2 sentences max).${danaHint}`;
 
   // Per-thread session file for persistent memory
-  await mkdir(MEMORY_DIR, { recursive: true });
   const sessionFile = join(MEMORY_DIR, `${threadId}.json`);
 
   let prompt = text;
@@ -172,8 +174,7 @@ async function handleWithPi({ username, mappedUsername, text, threadId, imageUrl
       const buf = Buffer.from(await resp.arrayBuffer());
       const tmpPath = join(tmpdir(), `ig-img-${Date.now()}.jpg`);
       await writeFile(tmpPath, buf);
-      prompt = `[user sent an image — describe what you see and react to it casually]`;
-      prompt += `\n\nImage: file://${tmpPath}`;
+      prompt = `[user sent an image — describe what you see and react to it casually]\n\nImage: file://${tmpPath}`;
       cleanup = tmpPath;
     } catch (e) {
       log(`  ⚠ Image download failed: ${e.message.slice(0, 60)}`);
@@ -184,9 +185,9 @@ async function handleWithPi({ username, mappedUsername, text, threadId, imageUrl
   log('  → Generating reply...');
   try {
     const { stdout } = await execFileAsync('/bin/bash', ['-c',
-      `${piBin} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --session ${JSON.stringify(sessionFile)} --thinking off --mode text 2>/dev/null`
+      `PI_AGENT_HOME=${PI_CONFIG} ${PI_BIN} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --session ${JSON.stringify(sessionFile)} --thinking off --mode text 2>/dev/null`
     ], {
-      timeout: 60000, maxBuffer: 1024 * 1024, encoding: 'utf8',
+      timeout: 15000, maxBuffer: 1024 * 1024, encoding: 'utf8',
       cwd: '/tmp'
     });
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// ig-agent — All-in-one Instagram agent CLI
+// ig-agent — Instagram agent CLI (MQTT-based)
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { BASE } from './constants.mjs';
 
 const command = process.argv[2];
@@ -17,11 +16,6 @@ async function main() {
     case 'login': {
       const { cmdLogin } = await import('./commands/login.mjs');
       await cmdLogin();
-      break;
-    }
-    case 'emulator': {
-      const { cmdEmulator } = await import('./commands/emulator.mjs');
-      await cmdEmulator(args[0] || 'start');
       break;
     }
     case 'send': {
@@ -58,12 +52,11 @@ async function main() {
     }
     default:
       console.log(`
-🐙 ig-agent — All-in-one Instagram agent CLI
+🐙 ig-agent — Instagram agent CLI (MQTT-based)
 
 Usage:
   ig-agent install              Install dependencies
-  ig-agent login                Login and save session
-  ig-agent emulator [start|stop] Start/stop Android emulator
+  ig-agent login                Login and save auth credentials
   ig-agent send <user> <msg>    Send a DM
   ig-agent read <user> [n]      Read DMs (default: 10)
   ig-agent status               Check system status
@@ -72,8 +65,8 @@ Usage:
   ig-agent stop                 Stop background daemon
 
 Config: ${join(BASE, 'config.json')}
-Session: ${join(BASE, 'session.json')}
-Logs: ${join(BASE, 'ig-agent.log')}
+Auth:   ${join(BASE, 'auth_info_instagram')}
+Logs:   ${join(BASE, 'ig-agent.log')}
       `);
   }
 }

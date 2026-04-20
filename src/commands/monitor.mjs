@@ -1,94 +1,105 @@
 /**
  * @module commands/monitor
- * Monitor command — poll adb notifications and auto-reply.
+ * Monitor command — MQTT-based realtime DM listener and auto-reply.
  */
-import { execSync, execFile } from 'node:child_process';
+import { RealtimeClient, useMultiFileAuthState } from 'nodejs-insta-private-api';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { loadConfig, loadSeen, saveSeen } from '../config.mjs';
+import { getAuthenticatedClient } from '../lib/ig-client.mjs';
+import { loadConfig } from '../config.mjs';
 import { log } from '../utils.mjs';
 
 const execFileAsync = promisify(execFile);
 
 export async function cmdMonitor() {
   const config = await loadConfig();
-  const seen = await loadSeen();
-  let processing = false;
+  log('=== ig-agent monitor starting (MQTT) ===');
 
-  log('=== ig-agent monitor started ===');
+  // Authenticate
+  const { ig, authState } = await getAuthenticatedClient();
+  log('✓ Authenticated');
 
-  async function check() {
-    if (processing) return;
-    processing = true;
-    try {
-      const adb = config.adb || 'adb';
-      const output = execSync(`${adb} shell dumpsys notification --noredact`, {
-        timeout: 15000, encoding: 'utf8'
-      });
+  // Create realtime client
+  const realtime = new RealtimeClient(ig);
 
-      const re = /sender=([^,]+),\s*text=([^,]+),\s*time=(\d+)/g;
-      let match;
-      while ((match = re.exec(output)) !== null) {
-        const sender = match[1].trim();
-        const text = match[2].trim();
-        const time = match[3];
-        const key = `${sender}:${text}:${time}`;
+  // Handle incoming messages
+  realtime.on('message_live', async (msg) => {
+    if (!msg || !msg.text || msg.itemType !== 'text') return;
 
-        if (seen.has(key) || text.length === 0) continue;
+    // Don't reply to own messages
+    const myId = ig.state.cookieUserId;
+    if (msg.userId?.toString() === myId) return;
 
-        const ctx = output.slice(Math.max(0, match.index - 2000), match.index);
-        if (!ctx.includes('com.instagram.android')) continue;
-        seen.add(key);
+    const username = msg.username || `user_${msg.userId}`;
+    log(`📩 @${username}: "${msg.text.slice(0, 50)}"`);
 
-        const username = Object.entries(config.nameMap || {}).find(([display]) =>
-          sender.includes(display)
-        )?.[1];
+    // Check if sender is in allowed list
+    const mappedUsername = Object.entries(config.nameMap || {}).find(([display]) =>
+      username.toLowerCase().includes(display.toLowerCase())
+    )?.[1] || username;
 
-        if (!username || !(config.allowedSenders || []).includes(username)) {
-          log(`→ Skipping: ${sender}`);
-          continue;
-        }
-
-        log(`📩 ${sender} (@${username}): "${text.slice(0, 50)}"`);
-        await handleWithHermes(sender, text, username, config);
-      }
-      await saveSeen(seen);
-    } catch (e) {
-      log(`✗ Check error: ${e.message.slice(0, 60)}`);
-    } finally {
-      processing = false;
+    if (!(config.allowedSenders || []).includes(mappedUsername)) {
+      log(`→ Skipping: @${username}`);
+      return;
     }
+
+    await handleWithHermes(username, msg.text, msg.thread_id, mappedUsername, config, realtime);
+  });
+
+  realtime.on('error', (err) => {
+    log(`✗ MQTT error: ${err.message?.slice(0, 80) || err}`);
+  });
+
+  realtime.on('warning', (warn) => {
+    log(`⚠ MQTT warning: ${warn.message?.slice(0, 80) || warn}`);
+  });
+
+  // Connect
+  try {
+    await realtime.startRealTimeListener();
+    log('✓ MQTT connected — listening for DMs');
+
+    // Save MQTT session for faster reconnects
+    try { await authState.saveMqttSession(realtime); } catch {}
+  } catch (e) {
+    log(`✗ MQTT connection failed: ${e.message}`);
+    process.exit(1);
   }
 
-  async function handleWithHermes(sender, text, username, config) {
-    const isDana = username === 'dana.seismo_';
-    const danaHint = isDana ? '\nBe extra warm and friendly!' : '';
-    const hermes = config.hermesPath || 'hermes';
-    const prompt = `You are @bumblebeeclanker on Instagram. Reply briefly and casually (1-2 sentences).${danaHint}\n\nDM from ${sender}: "${text}"\n\nJust output the reply text, nothing else.`;
+  // Graceful shutdown
+  const shutdown = async () => {
+    log('Shutting down...');
+    try { await realtime.disconnect(); } catch {}
+    try { await authState.saveMqttSession(realtime); } catch {}
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
 
-    log('  → Generating reply...');
+async function handleWithHermes(sender, text, threadId, username, config, realtime) {
+  const isDana = username === 'dana.seismo_';
+  const danaHint = isDana ? '\nBe extra warm and friendly!' : '';
+  const hermes = config.hermesPath || 'hermes';
+  const prompt = `You are @bumblebeeclanker on Instagram. Reply briefly and casually (1-2 sentences).${danaHint}\n\nDM from ${sender}: "${text}"\n\nJust output the reply text, nothing else.`;
+
+  log('  → Generating reply...');
+  try {
+    const { stdout } = await execFileAsync('/bin/bash', ['-c', `${hermes} chat -q ${JSON.stringify(prompt)}`], {
+      timeout: 60000, maxBuffer: 1024 * 1024, encoding: 'utf8'
+    });
+
+    const reply = stdout.trim();
+    if (!reply) { log('  ✗ Empty reply'); return; }
+    log(`  ← Reply: "${reply.slice(0, 60)}"`);
+
     try {
-      const { stdout } = await execFileAsync('/bin/bash', ['-c', `${hermes} chat -q ${JSON.stringify(prompt)}`], {
-        timeout: 60000, maxBuffer: 1024 * 1024, encoding: 'utf8'
-      });
-
-      const reply = stdout.trim();
-      if (!reply) { log('  ✗ Empty reply'); return; }
-      log(`  ← Reply: "${reply.slice(0, 60)}"`);
-
-      try {
-        const igCli = config.sendPath || `node ${require('node:path').join(require('node:os').homedir(), 'devel/argonauta/ig-cli/index.mjs')}`;
-        execSync(`${igCli} send ${username} "${reply.replace(/"/g, '\\"')}"`, {
-          timeout: 30000, encoding: 'utf8'
-        });
-        log(`  ✓ Sent to @${username}`);
-      } catch (e) {
-        log(`  ✗ Send error: ${e.message.slice(0, 80)}`);
-      }
+      await realtime.dmSender.sendTextMessage(threadId, reply);
+      log(`  ✓ Sent to @${username}`);
     } catch (e) {
-      log(`  ✗ Hermes error: ${e.message.slice(0, 80)}`);
+      log(`  ✗ Send error: ${e.message.slice(0, 80)}`);
     }
+  } catch (e) {
+    log(`  ✗ Hermes error: ${e.message.slice(0, 80)}`);
   }
-
-  await check();
-  setInterval(check, config.pollInterval || 5000);
 }

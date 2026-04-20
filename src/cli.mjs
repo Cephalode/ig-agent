@@ -18,6 +18,11 @@ async function main() {
       await cmdLogin();
       break;
     }
+    case 'import-cookies': {
+      const { cmdImportCookies } = await import('./commands/import-cookies.mjs');
+      await cmdImportCookies();
+      break;
+    }
     case 'send': {
       if (!args[0] || !args[1]) { console.log('Usage: ig-agent send <username> <message>'); process.exit(1); }
       const { cmdSend } = await import('./commands/send.mjs');
@@ -57,6 +62,7 @@ async function main() {
 Usage:
   ig-agent install              Install dependencies
   ig-agent login                Login and save auth credentials
+  ig-agent import-cookies       Import session cookies from browser
   ig-agent send <user> <msg>    Send a DM
   ig-agent read <user> [n]      Read DMs (default: 10)
   ig-agent status               Check system status

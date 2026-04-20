@@ -186,7 +186,7 @@ async function handleWithPi({ username, mappedUsername, text, threadId, imageUrl
     const { stdout } = await execFileAsync('/bin/bash', ['-c',
       `${piBin} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --session ${JSON.stringify(sessionFile)} --thinking off --mode text 2>/dev/null`
     ], {
-      timeout: 30000, maxBuffer: 1024 * 1024, encoding: 'utf8',
+      timeout: 60000, maxBuffer: 1024 * 1024, encoding: 'utf8',
       cwd: '/tmp'
     });
 

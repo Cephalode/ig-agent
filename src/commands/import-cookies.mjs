@@ -16,18 +16,40 @@ export async function cmdImportCookies() {
   const rl = readline.createInterface({ input, output });
 
   console.log(`
-╔══════════════════════════════════════════════════════════╗
-║  🍪 Import Instagram session from browser cookies       ║
-╠══════════════════════════════════════════════════════════╣
-║                                                          ║
-║  1. Open instagram.com in your browser (logged in)       ║
-║  2. Open DevTools → Application → Cookies → instagram.com║
-║  3. Copy the values for these cookies:                    ║
-║     • sessionid                                          ║
-║     • ds_user_id                                         ║
-║     • csrftoken                                          ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════╗
+║  🍪 Import Instagram session from browser cookies                   ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  STEP 1: Open instagram.com in your browser and log in               ║
+║                                                                      ║
+║  STEP 2: Open DevTools                                               ║
+║     Chrome / Edge / Brave:                                           ║
+║       → Press F12  (or Ctrl+Shift+I / Cmd+Option+I on Mac)          ║
+║       → Or right-click the page → "Inspect"                         ║
+║     Firefox:                                                         ║
+║       → Press F12  (or Ctrl+Shift+I / Cmd+Option+I on Mac)          ║
+║     Safari (Mac):                                                    ║
+║       → First enable: Safari → Settings → Advanced                  ║
+║         → tick "Show Develop menu in menu bar"                       ║
+║       → Then press Cmd+Option+I                                      ║
+║                                                                      ║
+║  STEP 3: Find the cookies                                            ║
+║     Chrome/Edge/Brave:                                               ║
+║       → Click the "Application" tab at the top of DevTools           ║
+║       → Left sidebar: expand "Cookies" → click "https://www.instagr ║
+║     Firefox:                                                         ║
+║       → Click the "Storage" tab                                      ║
+║       → Left sidebar: expand "Cookies" → click "https://www.instagr ║
+║     Safari:                                                          ║
+║       → Click the "Storage" tab                                      ║
+║       → Left sidebar: expand "Cookies" → click "www.instagram.com"  ║
+║                                                                      ║
+║  STEP 4: Copy these 3 cookie values (double-click the Value cell):   ║
+║     • sessionid   — long string, looks like "12345678901%3AABC..."   ║
+║     • ds_user_id  — your numeric user ID, e.g. "7012345678"         ║
+║     • csrftoken   — random-looking alphanumeric string               ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
 `);
 
   const sessionId = await rl.question('sessionid: ');

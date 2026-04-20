@@ -13,6 +13,7 @@ export const SEEN_FILE = join(BASE, 'seen.json');
 export const LOG_FILE = join(BASE, 'ig-agent.log');
 export const PID_FILE = join(BASE, 'daemon.pid');
 export const CHATS_DIR = join(BASE, 'chats');
+export const AUTH_DIR = join(BASE, 'auth_info_instagram');
 
 export const DEFAULT_CONFIG = {
   allowedSenders: ['ydkshad', 'cephalode', 'dana.seismo_', 'fenpolt', 'pbnjaney'],
@@ -23,9 +24,5 @@ export const DEFAULT_CONFIG = {
     'Fenpolt': 'fenpolt',
     'Pbnjaney': 'pbnjaney',
   },
-  pollInterval: 5000,
   replyEnabled: true,
-  emulatorAvd: 'ig-phone',
-  emulatorMemory: 2048,
-  emulatorHeadless: true,
 };

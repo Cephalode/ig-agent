@@ -2,7 +2,8 @@
  * @module commands/monitor
  * Monitor command — MQTT-based realtime DM listener and auto-reply.
  */
-import { RealtimeClient, useMultiFileAuthState } from 'nodejs-insta-private-api';
+import instaPkg from 'nodejs-insta-private-api';
+const { RealtimeClient, useMultiFileAuthState } = instaPkg;
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getAuthenticatedClient } from '../lib/ig-client.mjs';

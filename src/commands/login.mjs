@@ -2,7 +2,8 @@
  * @module commands/login
  * Login command — authenticate and save session using multi-file auth state.
  */
-import { IgApiClient, useMultiFileAuthState } from 'nodejs-insta-private-api';
+import instaPkg from 'nodejs-insta-private-api';
+const { IgApiClient, useMultiFileAuthState } = instaPkg;
 import { mkdir } from 'node:fs/promises';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';

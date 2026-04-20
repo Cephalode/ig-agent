@@ -2,7 +2,8 @@
  * @module lib/ig-client
  * Shared IgApiClient factory with multi-file auth state persistence.
  */
-import { IgApiClient } from 'nodejs-insta-private-api';
+import pkg from 'nodejs-insta-private-api';
+const { IgApiClient, useMultiFileAuthState } = pkg;
 import { AUTH_DIR } from '../constants.mjs';
 import { mkdir } from 'node:fs/promises';
 
@@ -13,7 +14,6 @@ import { mkdir } from 'node:fs/promises';
  */
 export async function getAuthenticatedClient() {
   const ig = new IgApiClient();
-  const { useMultiFileAuthState } = await import('nodejs-insta-private-api');
   const authState = await useMultiFileAuthState(AUTH_DIR);
 
   if (!authState.hasSession()) {

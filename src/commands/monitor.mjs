@@ -89,6 +89,10 @@ export async function cmdMonitor() {
     const myId = ig.state.cookieUserId;
     if (String(userId) === String(myId)) return;
 
+    // Skip ghost events (no real user or text)
+    if (!userId || String(userId) === 'unknown') return;
+    if (!text && !imageUrl) return;
+
     // Resolve display name → username mapping
     const mappedUsername = Object.entries(config.nameMap || {}).find(([display]) =>
       username.toLowerCase().includes(display.toLowerCase())
@@ -184,11 +188,18 @@ async function handleWithPi({ mappedUsername, text, threadId, imageUrl, config, 
 
   log('  → Generating reply...');
   try {
-    const { stdout } = await execFileAsync('/bin/bash', ['-c',
-      `PI_AGENT_HOME=${PI_CONFIG} ${PI_BIN} -p ${JSON.stringify(prompt)} --system-prompt ${JSON.stringify(systemPrompt)} --model ${model} --no-tools --session ${JSON.stringify(sessionFile)} --thinking off --mode text 2>/dev/null`
+    const { stdout } = await execFileAsync(PI_BIN, [
+      '-p', prompt,
+      '--system-prompt', systemPrompt,
+      '--model', model,
+      '--no-tools',
+      '--session', sessionFile,
+      '--thinking', 'off',
+      '--mode', 'text',
     ], {
       timeout: 15000, maxBuffer: 1024 * 1024, encoding: 'utf8',
-      cwd: '/tmp'
+      cwd: '/tmp',
+      env: { ...process.env, PI_AGENT_HOME: PI_CONFIG },
     });
 
     const reply = stdout.trim();

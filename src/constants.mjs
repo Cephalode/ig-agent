@@ -26,4 +26,6 @@ export const DEFAULT_CONFIG = {
     'Pbnjaney': 'pbnjaney',
   },
   replyEnabled: true,
+  zaiApiKey: '075e0e661c2040d29b12397090864370.Fqj89vi5EaoO5Sse',
+  zaiModel: 'glm-4.7-flash',
 };

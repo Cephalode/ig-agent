@@ -15,6 +15,7 @@ export const PID_FILE = join(BASE, 'daemon.pid');
 export const CHATS_DIR = join(BASE, 'chats');
 export const AUTH_DIR = join(BASE, 'auth_info_instagram');
 export const MEMORY_DIR = join(BASE, 'memory');
+export const NOTES_DIR = join(BASE, 'notes');
 
 export const DEFAULT_CONFIG = {
   allowedSenders: ['ydkshad', 'cephalode', 'dana.seismo_', 'fenpolt', 'pbnjaney'],
@@ -26,4 +27,6 @@ export const DEFAULT_CONFIG = {
     'Pbnjaney': 'pbnjaney',
   },
   replyEnabled: true,
+  zaiApiKey: '075e0e661c2040d29b12397090864370.Fqj89vi5EaoO5Sse',
+  zaiModel: 'glm-4.7-flash',
 };

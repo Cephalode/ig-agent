@@ -294,6 +294,7 @@ async function handleWithZai({ mappedUsername, text, threadId, imageUrl, config,
   }
 
   log('  → Generating reply...');
+  try { await realtime.directCommands.indicateActivity({ threadId }); } catch {}
   try {
     // Load conversation history
     const history = await loadHistory(threadId);

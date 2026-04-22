@@ -15,6 +15,7 @@ export const PID_FILE = join(BASE, 'daemon.pid');
 export const CHATS_DIR = join(BASE, 'chats');
 export const AUTH_DIR = join(BASE, 'auth_info_instagram');
 export const MEMORY_DIR = join(BASE, 'memory');
+export const NOTES_DIR = join(BASE, 'notes');
 
 export const DEFAULT_CONFIG = {
   allowedSenders: ['ydkshad', 'cephalode', 'dana.seismo_', 'fenpolt', 'pbnjaney'],

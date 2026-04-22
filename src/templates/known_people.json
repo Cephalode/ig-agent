@@ -1,0 +1,4 @@
+{
+  "_readme": "Map of Instagram usernames to persona descriptions. These get injected into the system prompt when that person messages the bot. Example: 'dana.seismo_': 'Dana is a good friend. Be kind.'",
+  "dana.seismo_": "Dana is a good friend. Always be kind, warm, and encouraging with her. Use only kind and encouraging words when speaking to or about Dana. No exceptions."
+}

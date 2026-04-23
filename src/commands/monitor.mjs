@@ -310,117 +310,183 @@ export async function cmdMonitor() {
   const { ig, authState } = await getAuthenticatedClient();
   log('✓ Authenticated');
 
-  // Create realtime client
-  const realtime = new RealtimeClient(ig);
+  // MQTT reconnection state
+  let lastReconnectAttempt = 0;
+  let reconnectAttempt = 0;
+  const RECONNECT_COOLDOWN_MS = 30_000;
 
-  // Fix #1: Listen for threadUpdate events to populate thread cache
-  realtime.on('threadUpdate', (data) => {
-    try {
-      const update = data.update || data;
-      const threadId = update.thread_id || update.thread_v2_id || data.meta?.thread_id;
-      if (!threadId) return;
+  /**
+   * Detect CONNACK no-payload / EmptyPacketError from stale MQTT connectPayload.
+   */
+  function isConnackError(err) {
+    const msg = (err.message || err?.toString() || '').toLowerCase();
+    return msg.includes('connack') || msg.includes('nopayload') || msg.includes('emptypacket');
+  }
 
-      const users = (update.users || []).map(u => ({
-        username: u.username,
-        pk: String(u.pk),
-      }));
-
-      threadCache.set(threadId, {
-        isGroup: !!(update.is_group || update.isGroup),
-        title: update.thread_title || '',
-        users,
-      });
-
-      // Also populate realtime.threads for library-internal use
+  /**
+   * Register all MQTT event listeners on a realtime client.
+   * Called on initial setup and again after each reconnection.
+   */
+  function setupRealtimeHandlers(rt) {
+    // Fix #1: Listen for threadUpdate events to populate thread cache
+    rt.on('threadUpdate', (data) => {
       try {
-        if (!realtime.threads.has(threadId)) {
-          realtime.threads.set(threadId, {
-            isGroup: !!(update.is_group || update.isGroup),
-            title: update.thread_title || '',
-            users,
-          });
-        }
+        const update = data.update || data;
+        const threadId = update.thread_id || update.thread_v2_id || data.meta?.thread_id;
+        if (!threadId) return;
+
+        const users = (update.users || []).map(u => ({
+          username: u.username,
+          pk: String(u.pk),
+        }));
+
+        threadCache.set(threadId, {
+          isGroup: !!(update.is_group || update.isGroup),
+          title: update.thread_title || '',
+          users,
+        });
+
+        // Also populate realtime.threads for library-internal use
+        try {
+          if (!rt.threads.has(threadId)) {
+            rt.threads.set(threadId, {
+              isGroup: !!(update.is_group || update.isGroup),
+              title: update.thread_title || '',
+              users,
+            });
+          }
+        } catch {}
       } catch {}
-    } catch {}
-  });
+    });
 
-  // Handle incoming messages
-  realtime.on('message', async (msg) => {
-    const p = msg.parsed || {};
-    const threadId = p.threadId || msg.message?.thread_id;
-    const username = p.username || 'unknown';
-    const userId = p.userId;
-    const text = p.text || '';
-    const itemType = p.itemType || 'text';
-    const rawData = p.rawData || {};
-    const messageId = p.messageId || rawData.item_id || rawData.id;
-    const replyToItemId = rawData.reply_to_item_id || rawData.reply?.item_id || null;
+    // Handle incoming messages
+    rt.on('message', async (msg) => {
+      // Any successful message resets reconnect cooldown
+      lastReconnectAttempt = 0;
 
-    // Skip own messages
-    const myId = ig.state.cookieUserId;
-    if (String(userId) === String(myId)) return;
+      const p = msg.parsed || {};
+      const threadId = p.threadId || msg.message?.thread_id;
+      const username = p.username || 'unknown';
+      const userId = p.userId;
+      const text = p.text || '';
+      const itemType = p.itemType || 'text';
+      const rawData = p.rawData || {};
+      const messageId = p.messageId || rawData.item_id || rawData.id;
+      const replyToItemId = rawData.reply_to_item_id || rawData.reply?.item_id || null;
 
-    // Skip ghost events (no real user or text)
-    if (!userId || String(userId) === 'unknown') return;
+      // Skip own messages
+      const myId = ig.state.cookieUserId;
+      if (String(userId) === String(myId)) return;
 
-    // Resolve display name → username mapping
-    const mappedUsername = Object.entries(config.nameMap || {}).find(([display]) =>
-      username.toLowerCase().includes(display.toLowerCase())
-    )?.[1] || username;
+      // Skip ghost events (no real user or text)
+      if (!userId || String(userId) === 'unknown') return;
 
-    // Check allowed senders
-    if (!(config.allowedSenders || []).includes(mappedUsername)) {
-      log(`→ Skipping: @${username}`);
-      return;
-    }
+      // Resolve display name → username mapping
+      const mappedUsername = Object.entries(config.nameMap || {}).find(([display]) =>
+        username.toLowerCase().includes(display.toLowerCase())
+      )?.[1] || username;
 
-    // Fix #1: Group chat — only respond when @mentioned or replied-to
-    const threadInfo = await getThreadInfo(realtime, ig, threadId);
-    if (threadInfo.isGroup) {
-      const mentioned = text.toLowerCase().includes(`@${BOT_USERNAME}`);
-      const isReplyToBot = replyToItemId ? true : false; // reply to any message in group triggers
-      if (!mentioned && !isReplyToBot) {
-        log(`  📭 Group chat: skipping (no mention/reply) "@${username}: ${text.slice(0, 40)}"`);
+      // Check allowed senders
+      if (!(config.allowedSenders || []).includes(mappedUsername)) {
+        log(`→ Skipping: @${username}`);
         return;
       }
-    }
 
-    // Extract image URL for media messages
-    let imageUrl = null;
-    if (['media', 'raven_media'].includes(itemType)) {
-      const media = rawData.media || rawData.visual_media?.media;
-      if (media?.image_versions2?.candidates?.[0]?.url) {
-        imageUrl = media.image_versions2.candidates[0].url;
+      // Fix #1: Group chat — only respond when @mentioned or replied-to
+      const threadInfo = await getThreadInfo(rt, ig, threadId);
+      if (threadInfo.isGroup) {
+        const mentioned = text.toLowerCase().includes(`@${BOT_USERNAME}`);
+        const isReplyToBot = replyToItemId ? true : false; // reply to any message in group triggers
+        if (!mentioned && !isReplyToBot) {
+          log(`  📭 Group chat: skipping (no mention/reply) "@${username}: ${text.slice(0, 40)}"`);
+          return;
+        }
       }
+
+      // Extract image URL for media messages
+      let imageUrl = null;
+      if (['media', 'raven_media'].includes(itemType)) {
+        const media = rawData.media || rawData.visual_media?.media;
+        if (media?.image_versions2?.candidates?.[0]?.url) {
+          imageUrl = media.image_versions2.candidates[0].url;
+        }
+      }
+
+      const payload = {
+        username, mappedUsername, userId, text, itemType,
+        threadId, imageUrl, rawData, config, realtime: rt, ig,
+        messageId, replyToItemId, threadInfo,
+      };
+
+      if (itemType === 'text' && text) {
+        log(`📩 @${username}: "${text.slice(0, 50)}"`);
+        appendChatLog(threadId, username, text);
+        queue.enqueue(handleWithZai, payload);
+      } else if (imageUrl) {
+        log(`📸 @${username}: sent an image`);
+        appendChatLog(threadId, username, '[sent an image]');
+        payload.text = '[user sent an image]';
+        queue.enqueue(handleWithZai, payload);
+      } else {
+        log(`📨 @${username}: sent ${itemType} (skipped)`);
+      }
+    });
+
+    rt.on('error', (err) => {
+      log(`✗ MQTT error: ${err.message?.slice(0, 80) || err}`);
+
+      // Detect stale connectPayload → reconnect immediately
+      if (isConnackError(err)) {
+        const now = Date.now();
+        if (now - lastReconnectAttempt >= RECONNECT_COOLDOWN_MS) {
+          lastReconnectAttempt = now;
+          reconnectMqtt(); // fire-and-forget — errors are logged inside
+        } else {
+          log(`  ⟳ Reconnect on cooldown (${Math.round((RECONNECT_COOLDOWN_MS - (now - lastReconnectAttempt)) / 1000)}s remaining)`);
+        }
+      }
+    });
+
+    rt.on('warning', (warn) => {
+      log(`⚠ MQTT warning: ${warn.message?.slice(0, 80) || warn}`);
+    });
+  }
+
+  /**
+   * Perform a full MQTT reconnection: disconnect, create fresh client, re-register
+   * handlers, and start a new realtime listener session.
+   */
+  async function reconnectMqtt() {
+    try {
+      reconnectAttempt++;
+      log(`🔄 MQTT reconnecting (attempt ${reconnectAttempt})...`);
+
+      // Disconnect old client (ignore errors)
+      try { await realtime.disconnect(); } catch {}
+
+      // Fresh RealtimeClient gets a new connectPayload
+      realtime = new RealtimeClient(ig);
+
+      // Re-register all event handlers on the new client
+      setupRealtimeHandlers(realtime);
+
+      // Start fresh MQTT session
+      await realtime.startRealTimeListener();
+
+      // Persist the new session
+      try { await authState.saveMqttSession(realtime); } catch {}
+
+      log('✓ MQTT reconnected');
+    } catch (e) {
+      log(`✗ MQTT reconnection failed: ${e.message?.slice(0, 80) || e}`);
     }
+  }
 
-    const payload = {
-      username, mappedUsername, userId, text, itemType,
-      threadId, imageUrl, rawData, config, realtime, ig,
-      messageId, replyToItemId, threadInfo,
-    };
+  // Create realtime client
+  let realtime = new RealtimeClient(ig);
 
-    if (itemType === 'text' && text) {
-      log(`📩 @${username}: "${text.slice(0, 50)}"`);
-      appendChatLog(threadId, username, text);
-      queue.enqueue(handleWithZai, payload);
-    } else if (imageUrl) {
-      log(`📸 @${username}: sent an image`);
-      appendChatLog(threadId, username, '[sent an image]');
-      payload.text = '[user sent an image]';
-      queue.enqueue(handleWithZai, payload);
-    } else {
-      log(`📨 @${username}: sent ${itemType} (skipped)`);
-    }
-  });
-
-  realtime.on('error', (err) => {
-    log(`✗ MQTT error: ${err.message?.slice(0, 80) || err}`);
-  });
-
-  realtime.on('warning', (warn) => {
-    log(`⚠ MQTT warning: ${warn.message?.slice(0, 80) || warn}`);
-  });
+  // Register event handlers (extracted so reconnect can reuse them)
+  setupRealtimeHandlers(realtime);
 
   // Connect
   try {

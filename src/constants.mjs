@@ -27,6 +27,7 @@ export const DEFAULT_CONFIG = {
     'Pbnjaney': 'pbnjaney',
   },
   replyEnabled: true,
-  zaiApiKey: '[REDACTED-ZAI-KEY]',
+  // Set your own key in ~/.ig-agent/config.json — never commit API keys here.
+  zaiApiKey: '',
   zaiModel: 'glm-4.7-flash',
 };
